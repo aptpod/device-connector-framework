@@ -1,0 +1,26 @@
+[package]
+name = "device-connector-common"
+version = "2.0.0"
+authors = ["okubo <okubo@aptpod.co.jp>"]
+edition = "2021"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["rlib", "cdylib", "staticlib"]
+name = "device_connector_common"
+
+[dependencies]
+anyhow = "1"
+thiserror = "1"
+bytes = "1"
+serde = "1"
+serde_derive = "1"
+serde_json = "1"
+libc = "0.2"
+mime = "0.3"
+log = "0.4"
+env_logger = "0.9"
+
+[build-dependencies]
+cbindgen = "0.24"
+
