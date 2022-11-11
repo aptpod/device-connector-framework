@@ -15,14 +15,14 @@ task:
     element: text-src
     conf:
       text: "hello, world!"
-      duration_ms: 100
+      interval_ms: 100
     
   - id: 2
     element: stat-filter
     from:
       - - 1
     conf:
-      duration_ms: 1000
+      interval_ms: 1000
       
   - id: 3
     element: stdout-sink

@@ -21,7 +21,8 @@ pub struct PrintLogFilterElement {
 pub struct PrintLogFilterElementConf {
     /// Print duration.
     #[serde_as(as = "DurationMilliSecondsWithFrac<f64>")]
-    pub duration_ms: Duration,
+    #[serde(alias = "duration_ms")]
+    pub interval_ms: Duration,
     pub tag: String,
     pub output: PrintLogFilterElementConfOutput,
 }
@@ -63,7 +64,7 @@ impl ElementBuildable for PrintLogFilterElement {
         let now = Instant::now();
         let since = now.duration_since(self.before);
 
-        if since > self.conf.duration_ms {
+        if since > self.conf.interval_ms {
             let s = format!(
                 "[{}] {} msgs, {} bytes",
                 self.conf.tag, self.count, self.bytes
