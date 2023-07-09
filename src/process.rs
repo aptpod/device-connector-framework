@@ -69,7 +69,7 @@ pub fn signal_waiter(signal: BgProcessWaitSignal) -> Result<Receiver<()>> {
     };
 
     let (sender, receiver) = crossbeam_channel::unbounded();
-    let mut signals = signal_hook::iterator::Signals::new(&[signal])?;
+    let mut signals = signal_hook::iterator::Signals::new([signal])?;
 
     std::thread::spawn(move || {
         for _signal in signals.forever() {

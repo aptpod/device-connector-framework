@@ -18,17 +18,24 @@ pub struct FileSrcElement {
 pub struct FileSrcElementConf {
     /// File path.
     pub path: PathBuf,
+    /// Add write flag when opening a file.
+    #[serde(default)]
+    pub write_flag: bool,
 }
 
 impl ElementBuildable for FileSrcElement {
-    type Config = FileSinkElementConf;
+    type Config = FileSrcElementConf;
 
     const NAME: &'static str = "file-src";
 
     const SEND_PORTS: Port = 1;
 
     fn new(conf: Self::Config) -> Result<Self, Error> {
-        let file = File::open(&conf.path)?;
+        let file = if conf.write_flag {
+            OpenOptions::new().read(true).write(true).open(&conf.path)?
+        } else {
+            File::open(&conf.path)?
+        };
         Ok(FileSrcElement { file })
     }
 

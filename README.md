@@ -4,7 +4,7 @@ Device Connector Framework is a development framework provided by aptpod to deve
 
 ## Document
 
-https://docs.intdash.jp/terminal-system/device-connector/device-connector-framework/v2.0.1/
+https://docs.intdash.jp/terminal-system/device-connector/device-connector-framework/v2.1.0/
 
 ## How to try
 

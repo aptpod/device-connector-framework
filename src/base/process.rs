@@ -11,6 +11,7 @@ use std::process::{Child, ChildStdout, Command, Stdio};
 pub struct ProcessSrcElement {
     child: Child,
     output: ChildStdout,
+    read_buf: Vec<u8>,
 }
 
 /// Configuration type for `ProcessSrcElement`
@@ -26,6 +27,9 @@ pub struct ProcessSrcElementConf {
     /// Use if program is empty.
     #[serde(default)]
     pub command: String,
+    /// buffer size.
+    #[serde(default)]
+    pub buffer_size: Option<usize>,
 }
 
 impl ElementBuildable for ProcessSrcElement {
@@ -37,7 +41,7 @@ impl ElementBuildable for ProcessSrcElement {
 
     fn new(conf: Self::Config) -> Result<Self, Error> {
         let mut command = if let Some(program) = conf.program {
-            let mut command = Command::new(&program);
+            let mut command = Command::new(program);
             if !conf.args.is_empty() {
                 command.args(&conf.args);
             }
@@ -53,18 +57,23 @@ impl ElementBuildable for ProcessSrcElement {
 
         let mut child = command.stdout(Stdio::piped()).spawn()?;
         let output = child.stdout.take().unwrap();
+        let buffer_size = conf.buffer_size.unwrap_or(0xFF);
+        let read_buf = vec![0; buffer_size];
 
-        Ok(ProcessSrcElement { child, output })
+        Ok(ProcessSrcElement {
+            child,
+            output,
+            read_buf,
+        })
     }
 
     fn next(&mut self, pipeline: &mut Pipeline, _receiver: &mut MsgReceiver) -> ElementResult {
         pipeline.check_send_msg_type(0, MsgType::binary)?;
 
         let mut buf = pipeline.msg_buf(0);
-        let mut read_buf = [0; 0xFF];
 
         let n = loop {
-            let n = self.output.read(&mut read_buf)?;
+            let n = self.output.read(&mut self.read_buf)?;
 
             if n > 0 {
                 break n;
@@ -72,7 +81,7 @@ impl ElementBuildable for ProcessSrcElement {
                 return Ok(ElementValue::Close);
             }
         };
-        buf.write_all(&read_buf[0..n])?;
+        buf.write_all(&self.read_buf[0..n])?;
         Ok(ElementValue::MsgBuf)
     }
 }
