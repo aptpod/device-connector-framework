@@ -1,6 +1,6 @@
 use crate::task::{TaskId, TaskPort};
 use anyhow::Result;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 use std::path::{Path, PathBuf};
 

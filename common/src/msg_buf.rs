@@ -4,7 +4,7 @@ use std::{marker::PhantomData, mem::ManuallyDrop};
 
 use crate::Port;
 
-/// Dummy type for Vec<u8>
+/// Dummy type for `Vec<u8>`
 #[repr(C)]
 pub struct DcMsgBufInner {}
 

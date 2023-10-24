@@ -5,7 +5,7 @@ use crate::finalizer::FinalizerHolder;
 use crate::msg_buf::MsgBufInner;
 use crate::pipeline::PipelineInner;
 use common::{DcMsgReceiver, DcPipeline, Msg, SendableMsg};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{spawn, JoinHandle};
 

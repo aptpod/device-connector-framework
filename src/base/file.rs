@@ -2,7 +2,7 @@ use crate::element::*;
 use crate::error::Error;
 use crate::MsgType;
 use common::{MsgReceiver, Pipeline};
-use serde_derive::Deserialize;
+use serde::Deserialize;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Read, Write};
 use std::path::PathBuf;

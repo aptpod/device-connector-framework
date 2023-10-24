@@ -7,7 +7,7 @@ pub struct DcPipelineInner {}
 /// Handler for device connector pipeline.
 #[repr(C)]
 pub struct DcPipeline {
-    /// Pointer to Box<PipelineInner>
+    /// Pointer to `Box<PipelineInner>`
     pub inner: *mut DcPipelineInner,
     pub send_msg_type_checked: unsafe fn(*mut DcPipelineInner) -> bool,
     pub check_send_msg_type: unsafe fn(*mut DcPipelineInner, Port, DcMsgType) -> bool,
@@ -72,6 +72,8 @@ impl Pipeline {
     }
 
     /// Checks message type to send.
+    ///
+    /// On the first call, checks message type to send and returns the result. On subsequent calls, always returns `Ok`.
     pub fn check_send_msg_type<F>(&mut self, port: Port, msg_type: F) -> Result<(), TypeCheckError>
     where
         F: FnOnce() -> MsgType,

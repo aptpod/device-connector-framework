@@ -7,7 +7,7 @@ pub struct DcMsgReceiverInner {}
 /// Handler for device connector pipeline.
 #[repr(C)]
 pub struct DcMsgReceiver {
-    /// Pointer to Box<MsgReceiverInner>
+    /// Pointer to `Box<MsgReceiverInner>`
     pub inner: *mut DcMsgReceiverInner,
     pub recv: unsafe extern "C" fn(*mut DcMsgReceiverInner, Port, *mut DcMsg) -> bool,
     pub recv_any: unsafe extern "C" fn(*mut DcMsgReceiverInner, *mut Port, *mut DcMsg) -> bool,

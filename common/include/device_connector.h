@@ -15,7 +15,7 @@ typedef enum DcElementResult {
 } DcElementResult;
 
 /**
- * Dummy type for Vec<u8>
+ * Dummy type for `Vec<u8>`
  */
 typedef struct DcMsgBufInner {
 
@@ -70,7 +70,7 @@ typedef struct DcMsgReceiverInner {
  */
 typedef struct DcMsgReceiver {
   /**
-   * Pointer to Box<MsgReceiverInner>
+   * Pointer to `Box<MsgReceiverInner>`
    */
   struct DcMsgReceiverInner *inner;
   bool (*recv)(struct DcMsgReceiverInner*, Port, struct DcMsg*);
@@ -97,7 +97,7 @@ typedef struct DcPipelineInner {
  */
 typedef struct DcPipeline {
   /**
-   * Pointer to Box<PipelineInner>
+   * Pointer to `Box<PipelineInner>`
    */
   struct DcPipelineInner *inner;
   bool (*send_msg_type_checked)(struct DcPipelineInner*);

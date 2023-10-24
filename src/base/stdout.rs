@@ -1,7 +1,7 @@
 use crate::element::*;
 use crate::error::Error;
 use common::{MsgReceiver, MsgType, Pipeline};
-use serde_derive::Deserialize;
+use serde::Deserialize;
 use std::io::{BufWriter, Write};
 
 /// Emits received message to stdout.
@@ -16,6 +16,9 @@ pub struct StdoutSinkElement {
 pub struct StdoutSinkElementConf {
     /// Separator text.
     pub separator: Option<String>,
+    /// Buffer flush size.
+    #[serde(default)]
+    pub flush_size: usize,
 }
 
 impl ElementBuildable for StdoutSinkElement {
@@ -45,7 +48,10 @@ impl ElementBuildable for StdoutSinkElement {
             if let Some(separator) = self.conf.separator.as_ref() {
                 self.stdout.write_all(separator.as_bytes())?;
             }
-            self.stdout.flush()?;
+
+            if self.conf.flush_size == 0 || self.stdout.buffer().len() > self.conf.flush_size {
+                self.stdout.flush()?;
+            }
         }
     }
 }

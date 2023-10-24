@@ -1,7 +1,7 @@
 use crate::element::*;
 use crate::error::Error;
 use common::{MsgReceiver, MsgType, Pipeline};
-use serde_derive::Deserialize;
+use serde::Deserialize;
 use serde_with::{serde_as, DurationMilliSecondsWithFrac};
 use std::io::Write;
 use std::time::{Duration, Instant};
