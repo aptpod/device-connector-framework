@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use common::ElementConf;
 
 /// Device connector configuration
-#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Conf {
     #[serde(default)]
@@ -36,14 +36,14 @@ impl Conf {
 }
 
 /// Runner configuration
-#[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunnerConf {
     pub channel_capacity: Option<usize>,
 }
 
 /// Plugin configuration
-#[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginConf {
     pub plugin_files: Vec<PathBuf>,
@@ -51,7 +51,7 @@ pub struct PluginConf {
 
 /// Configuration of tasks to execute
 #[serde_as]
-#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskConf {
     pub id: TaskId,
@@ -64,7 +64,7 @@ pub struct TaskConf {
 }
 
 /// Background process configuration
-#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[serde(deny_unknown_fields)]
 pub struct BgProcessConf {

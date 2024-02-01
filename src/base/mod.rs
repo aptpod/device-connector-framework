@@ -15,8 +15,10 @@ mod print_log;
 mod process;
 mod stat;
 mod stdout;
+mod tcp;
 mod tee;
 mod text;
+mod udp;
 
 pub use file::*;
 pub use fixed_size::*;
@@ -25,8 +27,10 @@ pub use print_log::*;
 pub use process::*;
 pub use stat::*;
 pub use stdout::*;
+pub use tcp::*;
 pub use tee::*;
 pub use text::*;
+pub use udp::*;
 
 pub(crate) fn append_to_bank(bank: &mut ElementBank) {
     bank.append_from_buildable::<FileSinkElement>().unwrap();
@@ -41,6 +45,8 @@ pub(crate) fn append_to_bank(bank: &mut ElementBank) {
     bank.append_from_buildable::<ProcessSrcElement>().unwrap();
     bank.append_from_buildable::<RepeatProcessSrcElement>()
         .unwrap();
+    bank.append_from_buildable::<TcpSrcElement>().unwrap();
+    bank.append_from_buildable::<TcpSinkElement>().unwrap();
     bank.append_from_buildable::<TeeSrcElement>().unwrap();
     bank.append_from_buildable::<TeeFilterElement>().unwrap();
     bank.append_from_buildable::<TextSrcElement>().unwrap();
@@ -48,4 +54,6 @@ pub(crate) fn append_to_bank(bank: &mut ElementBank) {
         .unwrap();
     bank.append_from_buildable::<JsonSplitFilterElement>()
         .unwrap();
+    bank.append_from_buildable::<UdpSrcElement>().unwrap();
+    bank.append_from_buildable::<UdpSinkElement>().unwrap();
 }
