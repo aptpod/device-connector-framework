@@ -1,0 +1,24 @@
+[package]
+name = "dc-runner"
+version = "3.0.0"
+edition = "2021"
+authors = ["okubo <okubo@aptpod.co.jp>"]
+license = "Apache-2.0"
+description = "device connector runner"
+
+[dependencies]
+anyhow = "1.0.79"
+clap = { version = "4.4.15", features = ["derive"] }
+log = "0.4.20"
+regex = "1.10.6"
+termimad = "0.29.1"
+
+dc-core = { path = "../" }
+
+[package.metadata.deb]
+revision = ""
+assets = [
+  ["target/release/dc-runner", "/usr/bin/dc-runner", "755"],
+]
+depends = "$auto,libdc-core"
+recommends = "dc-plugin-base"

@@ -1,13 +1,14 @@
-use libc::c_char;
-use mime::Mime;
-use std::ffi::CStr;
 use std::fmt::{Debug, Display};
 use std::str::FromStr;
 use thiserror::Error;
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Mime(mime::Mime);
+
 /// Message type
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum MsgType {
+    Any,
     Mime(Mime),
     Custom(String),
 }
@@ -15,17 +16,17 @@ pub enum MsgType {
 impl MsgType {
     /// Any mime
     pub fn any() -> Self {
-        MsgType::Mime(mime::STAR_STAR)
+        MsgType::Any
     }
 
     /// Binary mime
     pub fn binary() -> Self {
-        MsgType::Mime("application/octet-stream".parse().unwrap())
+        MsgType::Mime(Mime("application/octet-stream".parse().unwrap()))
     }
 
     /// Create from mime
-    pub fn from_mime(mime: &str) -> Result<Self, mime::FromStrError> {
-        Ok(MsgType::Mime(mime.parse()?))
+    pub fn from_mime(mime: &str) -> Result<Self, MimeParseError> {
+        Ok(MsgType::Mime(Mime(mime.parse().map_err(MimeParseError)?)))
     }
 
     /// Get acceptable or not for other message type
@@ -38,7 +39,7 @@ impl MsgType {
         }
 
         match (self, other) {
-            (MsgType::Mime(mime), MsgType::Mime(other_mime)) => {
+            (MsgType::Mime(Mime(mime)), MsgType::Mime(Mime(other_mime))) => {
                 if mime.type_() == other_mime.type_() {
                     mime.subtype() == mime::STAR
                 } else {
@@ -48,25 +49,13 @@ impl MsgType {
             _ => false,
         }
     }
-
-    /// Convert to ffi type
-    pub fn into_ffi(self) -> DcMsgType {
-        DcMsgType {
-            inner: Box::into_raw(Box::new(self)) as *mut _,
-        }
-    }
-
-    /// # Safety
-    /// `msg_type` must be valid value.
-    pub unsafe fn from_ffi(msg_type: DcMsgType) -> Self {
-        *Box::from_raw(msg_type.inner as *mut MsgType)
-    }
 }
 
 impl Display for MsgType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MsgType::Mime(mime) => write!(f, "mime:{}", mime),
+            MsgType::Any => write!(f, "any"),
+            MsgType::Mime(mime) => write!(f, "mime:{}", mime.0),
             MsgType::Custom(name) => write!(f, "custom:{}", name),
         }
     }
@@ -78,14 +67,16 @@ pub enum MsgTypeFromStrErr {
     #[error("invalid prefix")]
     InvalidPrefix,
     #[error("{0}")]
-    Mime(#[from] mime::FromStrError),
+    Mime(#[from] MimeParseError),
 }
 
 impl FromStr for MsgType {
     type Err = MsgTypeFromStrErr;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Some(s) = s.strip_prefix("mime:") {
+        if s == "any" {
+            Ok(MsgType::Any)
+        } else if let Some(s) = s.strip_prefix("mime:") {
             Ok(MsgType::from_mime(s)?)
         } else if let Some(s) = s.strip_prefix("custom:") {
             Ok(MsgType::Custom(s.to_owned()))
@@ -95,32 +86,6 @@ impl FromStr for MsgType {
     }
 }
 
-#[doc(hidden)]
-#[repr(C)]
-pub struct DcMsgTypeInner;
-
-/// Message type
-#[repr(C)]
-pub struct DcMsgType {
-    inner: *mut DcMsgTypeInner,
-}
-
-/// Returns false if `s` is not valid message type text.
-///
-/// # Safety
-/// `s` must be a valid pointer.
-#[no_mangle]
-pub unsafe extern "C" fn dc_msg_type_new(s: *const c_char, msg_type: *mut DcMsgType) -> bool {
-    let s = if let Ok(s) = CStr::from_ptr(s).to_str() {
-        s
-    } else {
-        return false;
-    };
-
-    if let Ok(mt) = MsgType::from_str(s) {
-        *msg_type = mt.into_ffi();
-        true
-    } else {
-        false
-    }
-}
+#[derive(Debug, Error)]
+#[error("{0}")]
+pub struct MimeParseError(mime::FromStrError);

@@ -1,0 +1,14 @@
+[package]
+name = "dc-core-sys"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+bindgen = []
+
+[dependencies]
+libc = "0.2.151"
+
+[build-dependencies]
+bindgen = "0.69.1"

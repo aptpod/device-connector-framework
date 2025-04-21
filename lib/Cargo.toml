@@ -1,0 +1,52 @@
+[package]
+name = "dc-core-lib"
+version = "3.0.0"
+authors = ["okubo <okubo@aptpod.co.jp>"]
+edition = "2021"
+license = "Apache-2.0"
+description = "device connector core library"
+
+[lib]
+crate-type = [
+  "cdylib",
+  "staticlib",
+]
+name = "dc_core"
+
+[features]
+test_memory = []
+
+[dependencies]
+anyhow = "1.0.75"
+byteorder = "1.5.0"
+crossbeam = "0.8.2"
+ctrlc = { version = "3.4.2", features = ["termination"] }
+humantime = "2.1.0"
+libc = "0.2.150"
+libloading = "0.8.1"
+once_cell = "1.19.0"
+regex = "1.10.2"
+semver = "1.0.20"
+serde = { version = "1.0.193", features = ["derive"] }
+serde_json = "1.0.108"
+serde_with = "3.4.0"
+serde_yaml = "0.9.27"
+signal-hook = "0.3.17"
+termcolor = "1.4.0"
+
+dc-common = { path = "../common" }
+
+[build-dependencies]
+cbindgen = "0.26.0"
+regex = "1.10.2"
+
+[dev-dependencies]
+dhat = "0.3.2"
+
+[package.metadata.deb]
+name = "libdc-core"
+revision = ""
+assets = [
+  ["target/release-lib/libdc_core.so", "/usr/lib/x86_64-linux-gnu/libdc_core.so", "644"],
+]
+depends = "$auto"

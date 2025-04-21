@@ -1,0 +1,30 @@
+[package]
+name = "dc-plugin-base"
+version = "3.0.0"
+edition = "2021"
+authors = ["aptpod, Inc. Products <product-support@aptpod.co.jp>", "okubo <okubo@aptpod.co.jp>"]
+license = "Apache-2.0"
+description = "device connector base plugin"
+
+[lib]
+crate-type = [
+  "cdylib",
+  "rlib",
+]
+name = "dc_base"
+
+[dependencies]
+anyhow = "1.0.79"
+log = "0.4.20"
+serde = { version = "1.0.195", features = ["derive"] }
+serde_with = "3.4.0"
+
+dc-core = { path = "../", features = ["log-0_4"] }
+
+
+[package.metadata.deb]
+revision = ""
+assets = [
+  ["target/release/libdc_base.so", "/usr/lib/x86_64-linux-gnu/dc-plugins/libdc_base.so", "644"],
+]
+depends = "$auto,libdc-core"

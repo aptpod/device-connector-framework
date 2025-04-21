@@ -1,86 +1,133 @@
-use crate::element::Port;
-use crate::error::TypeCheckError;
-use crate::task::TaskId;
-use crate::type_check::TypeChecker;
-use common::{DcMsgBuf, DcMsgType, DcPipeline, DcPipelineInner, MsgType};
+use std::{ffi::CString, marker::PhantomData};
 
-/// Pipeline handler from elements.
-pub struct PipelineInner {
-    pub(crate) self_taskid: Option<TaskId>,
-    tc: TypeChecker,
-    send_msg_type_checked: bool,
-    pub(crate) msg_buf: DcMsgBuf,
+use crate::Port;
+use sys::DcPipeline;
+
+use crate::{MetadataId, MsgBufRef};
+
+/// `Pipeline` provides interaction with the runtime context.
+pub struct Pipeline {
+    _marker: PhantomData<*mut ()>,
 }
 
-impl PipelineInner {
-    pub fn new(tc: TypeChecker) -> Self {
-        PipelineInner {
-            self_taskid: None,
-            tc,
-            send_msg_type_checked: false,
-            msg_buf: crate::msg_buf::MsgBufInner::new().into_ffi(),
+impl Pipeline {
+    /// Get `MsgBufRef` for specified port.
+    ///
+    /// # Panics
+    /// This function will panics if given ports have duplicated values.
+    #[inline]
+    pub fn msg_buf<T: Ports>(&mut self, ports: T) -> T::MsgBufRefs<'_> {
+        ports.msg_buf(self)
+    }
+
+    /// Get this execution is closing.
+    #[inline]
+    pub fn closing(&mut self) -> bool {
+        let pipeline = self as *mut _ as *mut DcPipeline;
+        unsafe { sys::dc_pipeline_get_closing(pipeline) }
+    }
+
+    /// Set flag that this execution is closing.
+    #[inline]
+    pub fn close(&mut self) {
+        let pipeline = self as *mut _ as *mut DcPipeline;
+        unsafe { sys::dc_pipeline_close(pipeline) }
+    }
+
+    /// Get MetadataId from string id.
+    ///
+    /// # Panics
+    ///
+    /// Panics if given string is invalid or unknown.
+    #[inline]
+    pub fn metadata_id(&mut self, string_id: &str) -> MetadataId {
+        const BUF_SIZE: usize = 64;
+
+        let pipeline = self as *mut _ as *mut DcPipeline;
+        let len = string_id.len();
+        let id = if len < BUF_SIZE {
+            if string_id.contains('\0') {
+                panic!("Invalid string_id");
+            }
+
+            let mut buf = [0u8; BUF_SIZE];
+            buf[0..len].copy_from_slice(string_id.as_bytes());
+            buf[len] = b'\0';
+            unsafe { sys::dc_pipeline_get_metadata_id(pipeline, buf.as_ptr() as _) }
+        } else {
+            let cstr = CString::new(string_id).expect("Invalid string_id");
+            unsafe { sys::dc_pipeline_get_metadata_id(pipeline, cstr.as_ptr()) }
+        };
+        MetadataId::from_raw(id).expect("Cannot get MetadataId")
+    }
+}
+
+/// Represents one or multiple port numbers.
+pub trait Ports: private::Sealed {
+    type MsgBufRefs<'a>;
+    fn msg_buf(self, pipeline: &mut Pipeline) -> Self::MsgBufRefs<'_>;
+}
+
+impl Ports for Port {
+    type MsgBufRefs<'a> = MsgBufRef<'a>;
+    fn msg_buf(self, pipeline: &mut Pipeline) -> Self::MsgBufRefs<'_> {
+        let pipeline = pipeline as *mut _ as *mut DcPipeline;
+        unsafe {
+            let msg_buf = sys::dc_pipeline_get_msg_buf(pipeline, self);
+            MsgBufRef::new(msg_buf)
         }
     }
+}
 
-    pub fn clone(&self) -> Self {
-        PipelineInner {
-            self_taskid: self.self_taskid,
-            tc: self.tc.clone(),
-            send_msg_type_checked: self.send_msg_type_checked,
-            msg_buf: crate::msg_buf::MsgBufInner::new().into_ffi(),
-        }
-    }
+impl Ports for (Port, Port) {
+    type MsgBufRefs<'a> = (MsgBufRef<'a>, MsgBufRef<'a>);
+    fn msg_buf(self, pipeline: &mut Pipeline) -> Self::MsgBufRefs<'_> {
+        assert_ne!(self.0, self.1);
 
-    pub fn self_taskid(&self) -> TaskId {
-        self.self_taskid
-            .expect("called self_taskid from out of task")
-    }
+        let pipeline = pipeline as *mut _ as *mut DcPipeline;
+        let msg_buf_0 = unsafe {
+            let msg_buf = sys::dc_pipeline_get_msg_buf(pipeline, self.0);
+            MsgBufRef::new(msg_buf)
+        };
+        let msg_buf_1 = unsafe {
+            let msg_buf = sys::dc_pipeline_get_msg_buf(pipeline, self.1);
+            MsgBufRef::new(msg_buf)
+        };
 
-    /// Checks message type to send.
-    pub fn recheck_send_msg_type(
-        &mut self,
-        port: Port,
-        msg_type: MsgType,
-    ) -> Result<(), TypeCheckError> {
-        self.tc.check(self.self_taskid(), msg_type, port)?;
-        self.send_msg_type_checked = true;
-        Ok(())
-    }
-
-    /// check_send_msg_type() is already called or not.
-    pub fn send_msg_type_checked(&self) -> bool {
-        self.send_msg_type_checked
-    }
-
-    pub fn into_ffi(self) -> DcPipeline {
-        let pipeline = Box::new(self);
-
-        DcPipeline {
-            inner: Box::into_raw(pipeline) as *mut _,
-            send_msg_type_checked,
-            check_send_msg_type,
-            msg_buf,
-        }
+        (msg_buf_0, msg_buf_1)
     }
 }
 
-unsafe fn send_msg_type_checked(inner: *mut DcPipelineInner) -> bool {
-    let inner: &mut PipelineInner = &mut *(inner as *mut PipelineInner);
-    inner.send_msg_type_checked()
+impl Ports for (Port, Port, Port) {
+    type MsgBufRefs<'a> = (MsgBufRef<'a>, MsgBufRef<'a>, MsgBufRef<'a>);
+    fn msg_buf(self, pipeline: &mut Pipeline) -> Self::MsgBufRefs<'_> {
+        assert_ne!(self.0, self.1);
+        assert_ne!(self.0, self.2);
+
+        let pipeline = pipeline as *mut _ as *mut DcPipeline;
+        let msg_buf_0 = unsafe {
+            let msg_buf = sys::dc_pipeline_get_msg_buf(pipeline, self.0);
+            MsgBufRef::new(msg_buf)
+        };
+        let msg_buf_1 = unsafe {
+            let msg_buf = sys::dc_pipeline_get_msg_buf(pipeline, self.1);
+            MsgBufRef::new(msg_buf)
+        };
+        let msg_buf_2 = unsafe {
+            let msg_buf = sys::dc_pipeline_get_msg_buf(pipeline, self.2);
+            MsgBufRef::new(msg_buf)
+        };
+
+        (msg_buf_0, msg_buf_1, msg_buf_2)
+    }
 }
 
-unsafe fn check_send_msg_type(
-    inner: *mut DcPipelineInner,
-    port: Port,
-    msg_type: DcMsgType,
-) -> bool {
-    let inner: &mut PipelineInner = &mut *(inner as *mut PipelineInner);
-    let msg_type = MsgType::from_ffi(msg_type);
-    inner.recheck_send_msg_type(port, msg_type).is_ok()
-}
+mod private {
+    use super::Port;
 
-unsafe fn msg_buf(inner: *mut DcPipelineInner) -> *mut DcMsgBuf {
-    let inner: &mut PipelineInner = &mut *(inner as *mut PipelineInner);
-    crate::msg_buf::msg_buf_clear(&mut inner.msg_buf);
-    &mut inner.msg_buf
+    pub trait Sealed {}
+
+    impl Sealed for Port {}
+    impl Sealed for (Port, Port) {}
+    impl Sealed for (Port, Port, Port) {}
 }

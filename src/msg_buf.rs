@@ -1,105 +1,204 @@
-use common::{DcMsg, DcMsgBuf, DcMsgInner, Msg, SendableMsg};
+use std::{marker::PhantomData, mem::MaybeUninit};
 
-const INITIAL_CAP: usize = 1024;
+use bytes::{buf::UninitSlice, BufMut};
+use sys::DcMsgBuf;
 
-pub struct MsgBufInner {
-    buf: Vec<u8>,
+use crate::{Metadata, Msg};
+
+/// Message buffer to create `Msg`.
+pub struct MsgBuf(*mut DcMsgBuf);
+
+extern "C" {
+    fn dc_msg_buf_advance(msg_buf: *mut DcMsgBuf, cnt: usize);
+    fn dc_msg_buf_get_uninit(msg_buf: *mut DcMsgBuf, data: *mut *mut u8, len: *mut usize);
 }
 
-impl MsgBufInner {
+impl Default for MsgBuf {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MsgBuf {
+    #[inline]
     pub fn new() -> Self {
-        MsgBufInner {
-            buf: Vec::with_capacity(INITIAL_CAP),
-        }
+        Self(unsafe { sys::dc_msg_buf_new() })
     }
 
-    pub fn clear(&mut self) {
-        self.buf.clear();
+    #[inline]
+    pub fn extend(&mut self, data: &[u8]) {
+        unsafe { sys::dc_msg_buf_write(self.0, data.as_ptr(), data.len()) }
     }
 
-    pub fn into_ffi(self) -> DcMsgBuf {
-        let msg_buf = Box::new(self);
+    #[inline]
+    pub fn set_metadata(&mut self, metadata: Metadata) {
+        let id = metadata.id.into_raw();
+        let (type_, value) = metadata.value.into_raw();
+        let metadata = sys::DcMetadata { id, type_, value };
 
-        DcMsgBuf {
-            inner: Box::into_raw(msg_buf) as *mut _,
-            port: 0,
-        }
+        unsafe { sys::dc_msg_buf_set_metadata(self.0, metadata) }
     }
 
-    /// Get message without clone.
-    pub fn get_msg(&self) -> DcMsg {
-        DcMsg {
-            inner: DcMsgInner {
-                msg_ref: self.buf.as_ptr(),
-            },
-            len: self.buf.len(),
-            capacity: 0,
-            drop: None,
-        }
+    #[inline]
+    pub fn len(&self) -> usize {
+        unsafe { sys::dc_msg_buf_get_len(self.0) }
     }
 
-    pub fn get_msg_cloned(&self) -> DcMsg {
-        let mut v = std::mem::ManuallyDrop::new(self.buf.clone());
-        DcMsg {
-            inner: DcMsgInner {
-                owned: v.as_mut_ptr(),
-            },
-            len: v.len(),
-            capacity: v.capacity(),
-            drop: Some(msg_cloned_drop),
-        }
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    #[inline]
+    pub fn take_msg(&mut self) -> Msg {
+        unsafe { Msg::new(sys::dc_msg_buf_take_msg(self.0)) }
     }
 }
 
-pub fn msg_buf_clear(msg_buf: &mut DcMsgBuf) {
-    let inner = unsafe { &mut *(msg_buf.inner as *mut MsgBufInner) };
-    inner.clear();
+impl Drop for MsgBuf {
+    fn drop(&mut self) {
+        unsafe { sys::dc_msg_buf_free(self.0) }
+    }
 }
 
-unsafe extern "C" fn msg_cloned_drop(p: *mut u8, len: usize, capacity: usize) {
-    let _v = Vec::from_raw_parts(p, len, capacity);
-}
-
-pub fn msg_clone(msg: &Msg) -> SendableMsg {
-    let data: &[u8] = msg.as_bytes();
-
-    let mut v = std::mem::ManuallyDrop::new(data.to_vec());
-    let msg = DcMsg {
-        inner: DcMsgInner {
-            owned: v.as_mut_ptr(),
-        },
-        len: v.len(),
-        capacity: v.capacity(),
-        drop: Some(msg_cloned_drop),
-    };
-    SendableMsg(unsafe { Msg::new(msg) })
-}
-
-#[test]
-fn msg_buf_test() {
-    let mut msg_buf = MsgBufInner::new().into_ffi();
-    let p: *mut DcMsgBuf = &mut msg_buf as *mut _;
-
-    let original_data = [10, 20, 30, 40];
-
-    unsafe {
-        common::dc_msg_buf_write(p, original_data[0..2].as_ptr(), 2);
-        common::dc_msg_buf_write(p, original_data[2..3].as_ptr(), 2);
+impl std::io::Write for MsgBuf {
+    #[inline]
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.extend(buf);
+        Ok(buf.len())
     }
 
-    let msg = unsafe { (*((*p).inner as *mut MsgBufInner)).get_msg() };
-
-    unsafe {
-        let data = std::slice::from_raw_parts(msg.inner.msg_ref, msg.len);
-        assert_eq!(data, &original_data);
-        common::dc_msg_free(msg);
+    #[inline]
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 
-    let msg = unsafe { (*((*p).inner as *mut MsgBufInner)).get_msg_cloned() };
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        self.extend(buf);
+        Ok(())
+    }
+}
 
-    unsafe {
-        let data = std::slice::from_raw_parts(msg.inner.msg_ref, msg.len);
-        assert_eq!(data, &original_data);
-        common::dc_msg_free(msg);
+unsafe impl BufMut for MsgBuf {
+    #[inline]
+    fn remaining_mut(&self) -> usize {
+        isize::MAX as usize - self.len() - 8
+    }
+
+    #[inline]
+    unsafe fn advance_mut(&mut self, cnt: usize) {
+        unsafe { dc_msg_buf_advance(self.0, cnt) };
+    }
+
+    #[inline]
+    fn chunk_mut(&mut self) -> &mut UninitSlice {
+        unsafe {
+            let mut data: MaybeUninit<*mut u8> = MaybeUninit::uninit();
+            let mut len: MaybeUninit<usize> = MaybeUninit::uninit();
+            dc_msg_buf_get_uninit(self.0, data.as_mut_ptr(), len.as_mut_ptr());
+            &mut UninitSlice::from_raw_parts_mut(data.assume_init(), len.assume_init())[..]
+        }
+    }
+
+    #[inline]
+    fn put_slice(&mut self, src: &[u8]) {
+        self.extend(src);
+    }
+}
+
+/// Message buffer to create `Msg`.
+pub struct MsgBufRef<'a>(*mut DcMsgBuf, PhantomData<&'a mut ()>);
+
+impl MsgBufRef<'_> {
+    pub(crate) unsafe fn new(msg_buf: *mut DcMsgBuf) -> Self {
+        Self(msg_buf, PhantomData)
+    }
+
+    #[inline]
+    pub fn extend(&mut self, data: &[u8]) {
+        unsafe { sys::dc_msg_buf_write(self.0, data.as_ptr(), data.len()) }
+    }
+
+    #[inline]
+    pub fn set_metadata(&mut self, metadata: Metadata) {
+        let id = metadata.id.into_raw();
+        let (type_, value) = metadata.value.into_raw();
+        let metadata = sys::DcMetadata { id, type_, value };
+
+        unsafe { sys::dc_msg_buf_set_metadata(self.0, metadata) }
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        unsafe { sys::dc_msg_buf_get_len(self.0) }
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl std::io::Write for MsgBufRef<'_> {
+    #[inline]
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.extend(buf);
+        Ok(buf.len())
+    }
+
+    #[inline]
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        self.extend(buf);
+        Ok(())
+    }
+}
+
+unsafe impl BufMut for MsgBufRef<'_> {
+    #[inline]
+    fn remaining_mut(&self) -> usize {
+        isize::MAX as usize - self.len() - 8
+    }
+
+    #[inline]
+    unsafe fn advance_mut(&mut self, cnt: usize) {
+        unsafe { dc_msg_buf_advance(self.0, cnt) };
+    }
+
+    #[inline]
+    fn chunk_mut(&mut self) -> &mut UninitSlice {
+        unsafe {
+            let mut data: MaybeUninit<*mut u8> = MaybeUninit::uninit();
+            let mut len: MaybeUninit<usize> = MaybeUninit::uninit();
+            dc_msg_buf_get_uninit(self.0, data.as_mut_ptr(), len.as_mut_ptr());
+            &mut UninitSlice::from_raw_parts_mut(data.assume_init(), len.assume_init())[..]
+        }
+    }
+
+    #[inline]
+    fn put_slice(&mut self, src: &[u8]) {
+        self.extend(src);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use bytes::BufMut;
+
+    #[test]
+    fn msg_buf() {
+        let mut msg_buf = MsgBuf::new();
+
+        msg_buf.put_u32(10);
+
+        let msg = msg_buf.take_msg();
+        assert_eq!(msg.as_bytes(), &[0, 0, 0, 10]);
     }
 }

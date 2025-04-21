@@ -1,0 +1,19 @@
+[package]
+name = "dc-dev"
+version = "3.0.0"
+authors = ["okubo <okubo@aptpod.co.jp>"]
+edition = "2021"
+license = "Apache-2.0"
+description = "development files for device connector framework"
+
+[dependencies]
+
+
+[package.metadata.deb]
+name = "libdc-core-dev"
+revision = ""
+assets = [
+  ["../lib/include/dc_core.h", "/usr/include/dc_core.h", "644"],
+  ["dc_core.pc", "/usr/lib/x86_64-linux-gnu/pkgconfig/dc_core.pc", "644"],
+]
+depends = "libdc-core"

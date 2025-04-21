@@ -1,0 +1,30 @@
+[package]
+name = "dc-plugin-python"
+version = "1.0.0"
+edition = "2021"
+authors = ["aptpod, Inc. Products <product-support@aptpod.co.jp>", "okubo <okubo@aptpod.co.jp>"]
+license = "Apache-2.0"
+description = "device connector python plugin"
+
+[lib]
+crate-type = [
+  "cdylib",
+  "rlib",
+]
+name = "dc_python"
+
+[dependencies]
+anyhow = "1.0.79"
+crossbeam = "0.8.4"
+log = "0.4.20"
+pyo3 = { version = "0.22.0", features = ["gil-refs"] }
+serde = { version = "1.0.195", features = ["derive"] }
+
+dc-core = { path = "../", features = ["log-0_4"] }
+
+[package.metadata.deb]
+revision = ""
+assets = [
+  ["target/release/libdc_python.so", "/usr/lib/x86_64-linux-gnu/dc-plugins/libdc_python.so", "644"],
+]
+depends = "$auto,libdc-core"

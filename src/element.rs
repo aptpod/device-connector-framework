@@ -1,211 +1,234 @@
-//! Element definitions
+use std::ffi::{c_char, c_void, CStr, CString};
+use std::ptr::addr_of_mut;
 
-use crate::error::{ElementAppendError, ElementBuildError, UnknownElementError};
-use crate::ElementConf;
-use common::{DcElement, DcMsgReceiver, DcPipeline, MsgReceiver, Pipeline};
-pub use common::{ElementResult, ElementValue, MsgType, Port};
+pub use anyhow::{Context, Error};
 use serde::de::DeserializeOwned;
-use std::collections::HashMap;
+use sys::{DcElementResult, DcFinalizer, DcMsgReceiver, DcPipeline, DcPlugin};
 
-pub(crate) type ElementNextBoxed =
-    Box<dyn FnMut(*mut DcPipeline, *mut DcMsgReceiver) -> ElementResult + Send>;
-pub type ElementFinalizer = Box<dyn FnOnce() -> Result<(), crate::error::Error> + Send>;
+use crate::conf::Port;
+use crate::{Msg, MsgReceiver, MsgType, Pipeline, ReceiveError};
 
-/// Prepared element to execute
-pub struct ElementExecutable {
-    pub(crate) next_boxed: ElementNextBoxed,
-    pub(crate) finalizer: Option<ElementFinalizer>,
+pub type ElementResult = Result<ElementValue, Error>;
+pub type ElementFinalizer = Box<dyn FnOnce() -> Result<(), Error> + Send>;
+
+pub enum ElementValue {
+    Close,
+    Msg(Port, Msg),
+    MsgBuf,
 }
 
-/// Opaque type to build element
-#[derive(Clone)]
-pub enum ElementBuilder {
-    Native(fn(ElementConf) -> Result<ElementExecutable, crate::error::Error>),
-    Plugin(DcElement),
-}
-
-impl ElementBuilder {
-    pub(crate) fn build(
-        &self,
-        conf: ElementConf,
-    ) -> Result<ElementExecutable, crate::error::Error> {
-        match self {
-            ElementBuilder::Native(build_executable) => build_executable(conf),
-            ElementBuilder::Plugin(element) => crate::plugin::build_plugin_element(*element, &conf),
-        }
-    }
-}
-
-/// Unit of task execution.
-pub struct ElementPreBuild {
-    conf: ElementConf,
-    builder: ElementBuilder,
-}
-
-impl ElementPreBuild {
-    pub(crate) fn build(&mut self) -> Result<ElementExecutable, crate::error::Error> {
-        self.builder.build(self.conf.clone())
-    }
-}
-
-/// Buildable element from config.
-pub trait ElementBuildable: Sized + Send + 'static {
-    /// Configuration type for this element
+pub trait ElementBuildable: Sized + 'static {
+    /// Configuration type for this element.
     type Config: DeserializeOwned;
 
-    /// Name of this element. Must be unique in elements
+    /// Name of this element. Must be unique in elements.
     const NAME: &'static str;
 
-    /// The number of receiving ports
+    /// Description of this element.
+    const DESCRIPTION: &'static str = "";
+
+    /// Configuration document of this element.
+    const CONFIG_DOC: &'static str = "";
+
+    /// The number of receiving ports.
     const RECV_PORTS: Port = 0;
 
-    /// The number of sending ports
+    /// The number of sending ports.
     const SEND_PORTS: Port = 0;
 
-    /// Returns acceptable message type of this element
-    fn acceptable_msg_types() -> Vec<Vec<MsgType>> {
+    /// String metadata ids to use in this element.
+    const METADATA_IDS: &'static [&'static str] = &[];
+
+    /// Returns receivable message type of this element.
+    fn recv_msg_types() -> Vec<Vec<MsgType>> {
         Vec::new()
     }
 
-    /// Create element from config
-    fn new(conf: Self::Config) -> Result<Self, crate::error::Error>;
+    /// Returns send message type of this element.
+    fn send_msg_types() -> Vec<Vec<MsgType>> {
+        Vec::new()
+    }
+
+    /// Create element from config.
+    fn new(conf: Self::Config) -> Result<Self, Error>;
 
     /// Get message from `receiver` and returns the result of this element.
     fn next(&mut self, pipeline: &mut Pipeline, receiver: &mut MsgReceiver) -> ElementResult;
 
-    /// Returns the finalizer of this element
-    fn finalizer(&mut self) -> Result<Option<ElementFinalizer>, crate::error::Error> {
+    /// Returns the finalizer of this element.
+    fn finalizer(&mut self) -> Result<Option<ElementFinalizer>, Error> {
         Ok(None)
     }
+}
 
-    #[doc(hidden)]
-    fn element_conf_to_executable(
-        conf: ElementConf,
-    ) -> Result<ElementExecutable, crate::error::Error> {
-        let conf: Self::Config = conf.to_conf()?;
-        let mut element = Self::new(conf)?;
-        let finalizer = element.finalizer()?;
-        let next_boxed: ElementNextBoxed = Box::new(move |pipeline, recv| {
-            let mut pipeline = unsafe { Pipeline::new(pipeline) };
-            let mut recv = unsafe { MsgReceiver::new(recv) };
-            element.next(&mut pipeline, &mut recv)
-        });
-        Ok(ElementExecutable {
-            next_boxed,
-            finalizer,
-        })
-    }
+/// Configuration struct for elements that don't receive any configuration.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmptyElementConf {}
 
-    #[doc(hidden)]
-    fn builder() -> ElementBuilder {
-        ElementBuilder::Native(Self::element_conf_to_executable)
+#[doc(hidden)]
+pub unsafe fn register_element_to_plugin<E: ElementBuildable>(plugin: *mut DcPlugin) {
+    unsafe {
+        let name =
+            CString::new(E::NAME).unwrap_or_else(|_| panic!("Invalid element name: {}", E::NAME));
+
+        let element = sys::dc_element_new(
+            name.as_ptr(),
+            E::RECV_PORTS,
+            E::SEND_PORTS,
+            Some(element_new::<E>),
+            Some(element_next::<E>),
+            Some(element_free::<E>),
+        );
+
+        let desc = CString::new(E::DESCRIPTION)
+            .unwrap_or_else(|_| panic!("Invalid element description: {}", E::NAME));
+        sys::dc_element_set_description(element, desc.as_ptr());
+
+        let config_doc = CString::new(E::CONFIG_DOC)
+            .unwrap_or_else(|_| panic!("Invalid config doc: {}", E::NAME));
+        sys::dc_element_set_config_doc(element, config_doc.as_ptr());
+
+        for (port, recv_msg_types) in E::recv_msg_types()
+            .into_iter()
+            .take(Port::MAX as usize)
+            .enumerate()
+        {
+            for recv_msg_type in recv_msg_types {
+                let recv_msg_type =
+                    CString::new(recv_msg_type.to_string()).expect("Convert recv_msg_type");
+                sys::dc_element_append_recv_msg_type(element, port as _, recv_msg_type.as_ptr());
+            }
+        }
+
+        for (port, send_msg_types) in E::send_msg_types()
+            .into_iter()
+            .take(Port::MAX as usize)
+            .enumerate()
+        {
+            for send_msg_type in send_msg_types {
+                let send_msg_type =
+                    CString::new(send_msg_type.to_string()).expect("Convert send_msg_type");
+                sys::dc_element_append_send_msg_type(element, port as _, send_msg_type.as_ptr());
+            }
+        }
+
+        for metadata in E::METADATA_IDS {
+            let metadata = CString::new(*metadata).expect("Convert metadata id");
+            sys::dc_element_append_metadata_id(element, metadata.as_ptr());
+        }
+
+        sys::dc_element_set_finalizer_creator(element, Some(element_finalizer_creater::<E>));
+        sys::dc_plugin_register_element(plugin, element);
     }
 }
 
-type RecvMsgTypeGetter = Box<dyn Fn() -> Vec<Vec<MsgType>>>;
+unsafe extern "C-unwind" fn element_new<E: ElementBuildable>(config: *const c_char) -> *mut c_void {
+    let config = match unsafe { CStr::from_ptr(config) }.to_str() {
+        Ok(config) => config,
+        Err(e) => {
+            log::error!("invalid string for config: {:?}", e);
+            return std::ptr::null_mut();
+        }
+    };
+    let config: E::Config = match serde_json::from_str(config) {
+        Ok(config) => config,
+        Err(e) => {
+            log::error!("invalid config for element {}: {:?}", E::NAME, e);
+            return std::ptr::null_mut();
+        }
+    };
 
-/// Holds buildable element list.
-pub struct ElementBank {
-    builders: HashMap<String, ElementBuilder>,
-    acceptable_msg_types: HashMap<String, RecvMsgTypeGetter>,
-    ports: HashMap<String, (Port, Port)>,
+    let element = match E::new(config) {
+        Ok(element) => element,
+        Err(e) => {
+            log::error!("element {} new failed: {:?}", E::NAME, e);
+            return std::ptr::null_mut();
+        }
+    };
+    Box::into_raw(Box::new(element)) as *mut _
 }
 
-impl Default for ElementBank {
-    fn default() -> Self {
-        ElementBank::new()
+unsafe extern "C-unwind" fn element_next<E: ElementBuildable>(
+    element: *mut c_void,
+    pipeline: *mut DcPipeline,
+    msg_receiver: *mut DcMsgReceiver,
+) -> DcElementResult {
+    let result = {
+        let element: &mut E = unsafe { &mut *(element as *mut E) };
+        let pipeline: &mut Pipeline = unsafe { &mut *(pipeline as *mut Pipeline) };
+        let msg_receiver: &mut MsgReceiver = unsafe { &mut *(msg_receiver as *mut MsgReceiver) };
+
+        element.next(pipeline, msg_receiver)
+    };
+
+    match result {
+        Ok(value) => match value {
+            ElementValue::Close => sys::DcElementResult_Close,
+            ElementValue::Msg(port, msg) => {
+                unsafe { sys::dc_pipeline_set_result_msg(pipeline, port, msg.into_raw()) };
+                sys::DcElementResult_Msg
+            }
+            ElementValue::MsgBuf => sys::DcElementResult_MsgBuf,
+        },
+        Err(e) => {
+            // Normal close if ReceiveError
+            if e.is::<ReceiveError>() {
+                return sys::DcElementResult_Close;
+            }
+            if let Some(io_error) = e.downcast_ref::<std::io::Error>() {
+                if let Some(inner_error) = io_error.get_ref() {
+                    if inner_error.is::<ReceiveError>() {
+                        return sys::DcElementResult_Close;
+                    }
+                }
+            }
+
+            // Set error message
+            let e = format!("{:?}", e);
+            let e = CString::new(e).unwrap();
+
+            unsafe { sys::dc_pipeline_set_err_msg(pipeline, e.as_ptr()) };
+
+            sys::DcElementResult_Err
+        }
     }
 }
 
-impl ElementBank {
-    /// New empty ElementBank.
-    pub fn empty() -> Self {
-        ElementBank {
-            builders: HashMap::default(),
-            acceptable_msg_types: HashMap::default(),
-            ports: HashMap::default(),
+unsafe extern "C-unwind" fn element_free<E: ElementBuildable>(element: *mut c_void) {
+    let _element: Box<E> = unsafe { Box::from_raw(element as *mut E) };
+}
+
+unsafe extern "C-unwind" fn element_finalizer_creater<E: ElementBuildable>(
+    element: *mut c_void,
+    finalizer: *mut DcFinalizer,
+) -> bool {
+    let element: &mut E = unsafe { &mut *(element as *mut E) };
+
+    match element.finalizer() {
+        Ok(Some(f)) => {
+            let boxed_finalizer: Box<ElementFinalizer> = Box::new(f);
+            unsafe {
+                addr_of_mut!((*finalizer).f).write(Some(call_finalizer));
+                addr_of_mut!((*finalizer).context).write(Box::into_raw(boxed_finalizer) as *mut _);
+            }
+            true
+        }
+        Ok(None) => true,
+        Err(e) => {
+            log::error!("Creating finalizer of element {} failed: {:?}", E::NAME, e);
+            false
         }
     }
+}
 
-    /// Append element.
-    pub(crate) fn append(
-        &mut self,
-        name: &str,
-        builder: ElementBuilder,
-        acceptable_msg_types: RecvMsgTypeGetter,
-        ports: (Port, Port),
-    ) -> Result<(), ElementAppendError> {
-        if self.builders.contains_key(name) {
-            return Err(ElementAppendError(format!(
-                "element name duplication detected for \"{}\"",
-                name
-            )));
-        }
-
-        self.builders.insert(name.to_owned(), builder);
-        self.acceptable_msg_types
-            .insert(name.to_owned(), acceptable_msg_types);
-        self.ports.insert(name.to_owned(), ports);
-
-        log::trace!("append \"{}\" to element bank", name);
-        Ok(())
-    }
-
-    /// Register buildable element.
-    pub fn append_from_buildable<E: ElementBuildable + 'static>(
-        &mut self,
-    ) -> Result<(), ElementAppendError> {
-        self.append(
-            E::NAME,
-            ElementBuilder::Native(E::element_conf_to_executable),
-            Box::new(E::acceptable_msg_types),
-            (E::RECV_PORTS, E::SEND_PORTS),
-        )
-    }
-
-    /// get pre build element by name and config.
-    pub fn pre_build(
-        &self,
-        name: &str,
-        conf: ElementConf,
-    ) -> Result<ElementPreBuild, ElementBuildError> {
-        if let Some(builder) = self.builders.get(name) {
-            Ok(ElementPreBuild {
-                conf,
-                builder: builder.clone(),
-            })
-        } else {
-            Err(ElementBuildError::UnknownElement(UnknownElementError(
-                name.into(),
-            )))
-        }
-    }
-
-    /// Get acceptable message types.
-    pub fn acceptable_msg_types(
-        &self,
-        name: &str,
-    ) -> Result<Vec<Vec<MsgType>>, UnknownElementError> {
-        self.acceptable_msg_types
-            .get(name)
-            .map(|f| f())
-            .ok_or_else(|| UnknownElementError(name.into()))
-    }
-
-    /// Get the number of ports of element.
-    pub fn ports(&self, name: &str) -> Result<(Port, Port), UnknownElementError> {
-        self.ports
-            .get(name)
-            .copied()
-            .ok_or_else(|| UnknownElementError(name.into()))
-    }
-
-    /// New ElementBank with core elements.
-    pub fn new() -> Self {
-        let mut bank = Self::empty();
-
-        crate::base::append_to_bank(&mut bank);
-
-        bank
+unsafe extern "C-unwind" fn call_finalizer(context: *mut c_void) -> bool {
+    let finalizer: Box<ElementFinalizer> =
+        unsafe { Box::from_raw(context as *mut ElementFinalizer) };
+    if let Err(e) = finalizer() {
+        log::error!("Finalizer execution failed: {}", e);
+        false
+    } else {
+        true
     }
 }

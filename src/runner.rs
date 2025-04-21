@@ -1,205 +1,260 @@
-use crate::channel::ChannelBuilder;
-use crate::conf::*;
-use crate::element::*;
-use crate::finalizer::FinalizerHolder;
-use crate::loaded_plugin::LoadedPlugin;
-use crate::pipeline::PipelineInner;
-use crate::task::*;
-use crate::type_check::TypeChecker;
-use anyhow::{bail, Result};
-use std::collections::HashMap;
+use std::{
+    ffi::{c_void, CStr, CString},
+    path::Path,
+};
 
-/// Run built tasks.
-pub struct Runner<'b, 'p> {
-    tasks: Vec<Task>,
-    _conf: Conf,
-    _bank: &'b ElementBank,
-    _loaded_plugin: &'p LoadedPlugin,
-    fh: FinalizerHolder,
-}
+use sys::{DcElementInfo, DcPlugin};
+
+use crate::{
+    element::{register_element_to_plugin, ElementBuildable},
+    MsgType, Plugin, Port,
+};
 
 /// Runner builder.
-pub struct RunnerBuilder<'b, 'p> {
-    tasks: Vec<Task>,
-    channels: HashMap<TaskId, Vec<Vec<TaskPort>>>,
-    ports: HashMap<TaskId, (Port, Port)>,
-    conf: Conf,
-    bank: &'b ElementBank,
-    loaded_plugin: &'p LoadedPlugin,
-    pipeline: Option<PipelineInner>,
-    fh: FinalizerHolder,
+pub struct RunnerBuilder {
+    runner: *mut sys::DcRunner,
 }
 
-impl<'b, 'p> RunnerBuilder<'b, 'p> {
-    pub fn new(bank: &'b ElementBank, loaded_plugin: &'p LoadedPlugin, conf: &Conf) -> Self {
-        RunnerBuilder {
-            tasks: Vec::new(),
-            channels: HashMap::new(),
-            ports: HashMap::new(),
-            conf: conf.clone(),
-            bank,
-            loaded_plugin,
-            pipeline: None,
-            fh: FinalizerHolder::default(),
+impl Default for RunnerBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RunnerBuilder {
+    pub fn new() -> Self {
+        Self {
+            runner: unsafe { sys::dc_runner_new() },
         }
     }
 
-    fn append_task(
-        &mut self,
-        id: TaskId,
-        element: ElementPreBuild,
-        receive_from: &[Vec<TaskPort>],
-        ports: (Port, Port),
-    ) {
-        let task = Task::new(
-            id,
-            element,
-            self.pipeline
-                .as_ref()
-                .map(|pipeline| pipeline.clone())
-                .unwrap(),
-        );
-        self.tasks.push(task);
-        self.channels.insert(id, receive_from.to_vec());
-        self.ports.insert(id, ports);
+    /// Append a path to directory that includes plugin files.
+    pub fn append_dir<P: AsRef<Path>>(self, path: P) -> Result<Self, RunnerError> {
+        let path = path_to_cstring(path.as_ref())?;
+
+        unsafe { sys::dc_runner_append_dir(self.runner, path.as_ptr()) }
+
+        Ok(self)
     }
 
-    pub fn append_from_conf(&mut self, conf: &[TaskConf]) -> Result<()> {
-        let tc = TypeChecker::new(self.bank, conf)?;
-        let pipeline = PipelineInner::new(tc);
-        self.pipeline = Some(pipeline);
+    /// Append a path to a plugin file.
+    pub fn append_file<P: AsRef<Path>>(self, path: P) -> Result<Self, RunnerError> {
+        let path = path_to_cstring(path.as_ref())?;
 
-        for task_conf in conf {
-            let element = self.conf_to_element(task_conf)?;
-            // TODO: Port handling for plugin elements
-            let ports = self.bank.ports(&task_conf.element)?;
-            self.append_task(task_conf.id, element, &task_conf.from, ports);
+        unsafe { sys::dc_runner_append_file(self.runner, path.as_ptr()) }
+
+        Ok(self)
+    }
+
+    /// Append an element to runner.
+    ///
+    /// # Panics
+    /// This function may panic if given element has invalid name.
+    pub fn append_element<E: ElementBuildable>(self) -> Self {
+        let name = format!("append_element:{}", E::NAME);
+
+        unsafe extern "C-unwind" fn plugin_fn<E: ElementBuildable>(
+            dc_plugin: *mut DcPlugin,
+        ) -> bool {
+            unsafe { register_element_to_plugin::<E>(dc_plugin) };
+            true
         }
 
-        Ok(())
+        unsafe { self.append_plugin_init(&name, plugin_fn::<E>) }
     }
 
-    pub fn build(mut self) -> Result<Runner<'b, 'p>> {
-        self.set_channel()?;
+    /// Append a plugin to runner.
+    ///
+    /// # Panics
+    /// This function may panic if given element has invalid name.
+    pub fn append_plugin<P: Plugin>(self) -> Self {
+        unsafe extern "C-unwind" fn plugin_fn<P: Plugin>(dc_plugin: *mut DcPlugin) -> bool {
+            unsafe { P::init(dc_plugin) };
+            true
+        }
 
-        Ok(Runner {
-            tasks: self.tasks,
-            _conf: self.conf,
-            _bank: self.bank,
-            _loaded_plugin: self.loaded_plugin,
-            fh: self.fh,
-        })
+        unsafe { self.append_plugin_init(P::NAME, plugin_fn::<P>) }
     }
 
-    fn conf_to_element(&self, conf: &TaskConf) -> Result<ElementPreBuild> {
-        Ok(self
-            .bank
-            .pre_build(conf.element.as_ref(), conf.conf.clone().unwrap_or_default())?)
+    /// Append an plugin init function.
+    ///
+    /// # Safety
+    /// Given function must be correctly implemented.
+    ///
+    /// # Panics
+    /// This function may panic if name is invalid.
+    pub unsafe fn append_plugin_init(
+        self,
+        name: &str,
+        f: unsafe extern "C-unwind" fn(dc_plugin: *mut DcPlugin) -> bool,
+    ) -> Self {
+        let name = CString::new(name).unwrap();
+
+        unsafe { sys::dc_runner_append_plugin_init(self.runner, name.as_ptr(), Some(f)) }
+
+        self
     }
 
-    fn set_channel(&mut self) -> Result<()> {
-        let task_ids: Vec<TaskId> = self.tasks.iter().map(|task| task.id()).collect();
-        let mut channels: HashMap<TaskId, ChannelBuilder> = HashMap::new();
+    pub fn config<T: Into<String>>(self, config: T) -> Result<Self, RunnerError> {
+        let config = config.into();
+        let config = CString::new(config).map_err(|e| RunnerError::InvalidConfig(e.to_string()))?;
 
-        for task_id in &task_ids {
-            if channels.get(task_id).is_some() {
-                bail!("task id duplication detected (id: {})", task_id);
+        unsafe { sys::dc_runner_set_config(self.runner, config.as_ptr()) };
+
+        Ok(self)
+    }
+
+    pub fn run(self) -> Result<(), RunnerError> {
+        let result = unsafe { sys::dc_runner_run(self.runner) };
+
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(RunnerError::ExecutionFailed)
+        }
+    }
+
+    pub fn element_info_list(&self) -> Vec<ElementInfo> {
+        let list: Vec<ElementInfo> = vec![];
+        let list = Box::into_raw(Box::new(list)) as *mut _;
+
+        unsafe {
+            sys::dc_runner_iter_elements(self.runner, Some(element_info_callback), list);
+        }
+
+        let mut list: Box<Vec<ElementInfo>> = unsafe { Box::from_raw(list as *mut _) };
+        list.sort_by(|a, b| a.id.cmp(&b.id));
+        *list
+    }
+}
+
+unsafe extern "C-unwind" fn element_info_callback(p: *mut c_void, info: *const DcElementInfo) {
+    unsafe {
+        let list = &mut *(p as *mut Vec<ElementInfo>);
+        let info = &*info;
+
+        let element_id = CStr::from_ptr(info.id).to_string_lossy();
+
+        let cptr_to_string = |ptr, field| match CStr::from_ptr(ptr).to_str() {
+            Ok(s) => s.to_owned(),
+            Err(_) => {
+                log::warn!(
+                    "invalid string detected for {} in element \"{}\"",
+                    field,
+                    element_id
+                );
+                CStr::from_ptr(ptr).to_string_lossy().to_string()
             }
-            let ports = self.ports[task_id];
-            channels.insert(*task_id, ChannelBuilder::new(ports.0, ports.1));
-        }
+        };
 
-        // Set channels
-        for task_id in &task_ids {
-            // Receive from these ports
-            if let Some(origins) = self.channels.get(task_id) {
-                if origins.len() == 1 && origins[0].len() == 1 {
-                    let child_task_port = origins[0][0];
-                    let child_task_id = child_task_port.0;
-                    let i = self.tasks.iter().enumerate().find_map(|(i, task)| {
-                        if task.id() == child_task_id {
-                            Some(i)
-                        } else {
-                            None
-                        }
+        let mut recv_msg_types = Vec::new();
+        let mut p = info.recv_msg_types;
+        while !(*p).is_null() {
+            let mut q = *p;
+            let mut msg_types_for_port = Vec::new();
+            while !(*q).is_null() {
+                let msg_type = CStr::from_ptr(*q)
+                    .to_str()
+                    .unwrap_or_else(|_| {
+                        panic!("invalid msg type in element info of \"{}\"", element_id)
+                    })
+                    .parse::<MsgType>()
+                    .unwrap_or_else(|_| {
+                        panic!("invalid msg type in element info of \"{}\"", element_id)
                     });
-                    let i = if let Some(i) = i { i } else { todo!() };
-                    let mut child_task = self.tasks.remove(i);
-                    if let Some(channel) = channels.remove(&child_task_id) {
-                        child_task.set_channel(channel.build());
-                    } else {
-                        bail!(
-                            "task {} not found that is referenced by task {}",
-                            child_task_id,
-                            task_id
-                        )
-                    }
-                    channels
-                        .get_mut(task_id)
-                        .unwrap()
-                        .set_child(child_task.child(&mut self.fh)?);
-                } else {
-                    for (recv_port, origins) in origins.iter().enumerate() {
-                        for origin in origins {
-                            // Set channel origin -> task_id:recv_port
-                            let sender = channels
-                                .get_mut(task_id)
-                                .unwrap()
-                                .get_sender(recv_port as Port);
-                            if let Some(origin_channel) = channels.get_mut(&origin.0) {
-                                origin_channel.set_sender(sender, origin.1);
-                            } else {
-                                bail!(
-                                    "task {} not found that is referenced by task {}",
-                                    origin,
-                                    task_id
-                                )
-                            }
-                        }
-                    }
-                }
+                q = q.add(1);
+                msg_types_for_port.push(msg_type);
             }
+            p = p.add(1);
+            recv_msg_types.push(msg_types_for_port);
         }
 
-        // Set built channel for tasks
-        for task in &mut self.tasks {
-            let task_id = task.id();
-            if let Some(channel) = channels.remove(&task_id) {
-                task.set_channel(channel.build());
-            } else {
-                todo!()
+        let mut send_msg_types = Vec::new();
+        let mut p = info.send_msg_types;
+        while !(*p).is_null() {
+            let mut q = *p;
+            let mut msg_types_for_port = Vec::new();
+            while !(*q).is_null() {
+                let msg_type = CStr::from_ptr(*q)
+                    .to_str()
+                    .unwrap_or_else(|_| {
+                        panic!("invalid msg type in element info of \"{}\"", element_id)
+                    })
+                    .parse::<MsgType>()
+                    .unwrap_or_else(|_| {
+                        panic!("invalid msg type in element info of \"{}\"", element_id)
+                    });
+                q = q.add(1);
+                msg_types_for_port.push(msg_type);
             }
+            p = p.add(1);
+            send_msg_types.push(msg_types_for_port);
         }
 
-        Ok(())
+        let mut metadata_ids = Vec::new();
+        let mut p = info.metadata_ids;
+        while !(*p).is_null() {
+            let metadata_id = cptr_to_string(*p, "metadata_ids");
+            p = p.add(1);
+            metadata_ids.push(metadata_id);
+        }
+
+        let element_info = ElementInfo {
+            id: cptr_to_string(info.id, "id"),
+            origin: cptr_to_string(info.origin, "origin"),
+            authors: cptr_to_string(info.authors, "authors"),
+            description: cptr_to_string(info.description, "description"),
+            config_doc: cptr_to_string(info.config_doc, "config_doc"),
+            recv_ports: info.recv_ports,
+            send_ports: info.send_ports,
+            recv_msg_types,
+            send_msg_types,
+            metadata_ids,
+        };
+
+        list.push(element_info);
     }
 }
 
-impl<'b, 'p> Runner<'b, 'p> {
-    /// Runs and wait for closing.
-    pub fn run(self) -> Result<()> {
-        // Start tasks
-        let mut fh = self.fh;
-        let mut tasks = Vec::new();
-        for task in self.tasks.into_iter() {
-            log::info!("spawn task {}", task.id());
-            let jh = task.spawn(&mut fh)?;
-            tasks.push(jh);
-        }
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct ElementInfo {
+    pub id: String,
+    pub origin: String,
+    pub authors: String,
+    pub description: String,
+    pub config_doc: String,
+    pub recv_ports: Port,
+    pub send_ports: Port,
+    pub recv_msg_types: Vec<Vec<MsgType>>,
+    pub send_msg_types: Vec<Vec<MsgType>>,
+    pub metadata_ids: Vec<String>,
+}
 
-        crate::finalizer::register(fh);
+#[cfg(unix)]
+fn path_to_cstring(path: &Path) -> Result<CString, RunnerError> {
+    use std::os::unix::ffi::OsStrExt;
 
-        ctrlc::set_handler(|| {
-            log::info!("process received exit signal");
-            crate::close::close();
-        })?;
+    CString::new(path.as_os_str().as_bytes()).map_err(|e| RunnerError::InvalidPath(e.to_string()))
+}
 
-        while let Some(jh) = tasks.pop() {
-            let _result = jh.join();
-        }
+#[cfg(not(unix))]
+fn path_to_cstring(path: &Path) -> Result<CString, RunnerError> {
+    let path = path
+        .to_str()
+        .ok_or_else(|| RunnerError::InvalidPath("invalid utf-8".into()))?;
 
-        crate::finalizer::finalize();
+    CString::new(path).map_err(|e| RunnerError::InvalidPath(e.to_string()))
+}
 
-        Ok(())
-    }
+/// Errors of runner.
+#[derive(Clone, Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum RunnerError {
+    #[error("invalid path: {0}")]
+    InvalidPath(String),
+    #[error("invalid config: {0}")]
+    InvalidConfig(String),
+    #[error("execution failed")]
+    ExecutionFailed,
 }

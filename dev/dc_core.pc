@@ -1,0 +1,11 @@
+prefix=/usr
+exec_prefix=${prefix}
+libdir=${prefix}/lib/x86_64-linux-gnu
+includedir=${prefix}/include
+
+Name: dc_core
+Description: device connector core library
+Version: 3.0.0
+Requires:
+Libs: -L${libdir} -ldc_core
+Cflags: -I${includedir}

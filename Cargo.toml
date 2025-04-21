@@ -1,53 +1,47 @@
 [package]
-name = "device-connector"
-version = "2.3.0"
-authors = ["okubo <okubo@aptpod.co.jp>"]
+name = "dc-core"
+version = "3.0.0"
+authors = ["aptpod, Inc. Products <product-support@aptpod.co.jp>", "okubo <okubo@aptpod.co.jp>"]
 edition = "2021"
 license = "Apache-2.0"
 
-[package.metadata.deb]
-depends = "$auto"
-assets = [
-    ["target/release/device-connector-run", "/usr/bin/device-connector", "755"],
-]
-
 [lib]
-name = "device_connector"
+crate-type = ["rlib"]
+name = "dc_core"
 
-[[bin]]
-name = "device-connector-run"
-path = "src/main.rs"
+[features]
+log-0_4 = []
 
 [dependencies]
-anyhow = "1"
-thiserror = "1"
-serde = { version = "1", features = ["derive"] }
-serde_with = "2"
-serde_yaml = "0.9"
-serde_json = "1"
-once_cell = "1"
-regex = "1"
-extend = "1"
-fnv = "1"
-ctrlc = { version = "3", features = ["termination"] }
-signal-hook = "0.3.9"
-crossbeam-channel = "0.5.0"
-futures = "0.3"
-bytes = "1"
-libloading = "0.7"
-libc = "0.2"
-log = "0.4"
-mime = "0.3"
-device-connector-common = { path = "./common" }
+anyhow = "1.0.79"
+bytes = "1.5.0"
+log = { version = "0.4.20", features = ["std"] }
+regex = "1.9.6"
+serde = { version = "1.0.193", features = ["derive"] }
+serde_json = "1.0.111"
+serde_with = "3.4.0"
+serde_yaml = "0.9.30"
+thiserror = "1.0.56"
+once_cell = "1.19.0"
+mime = "0.3.17"
 
-# Dependeincies for device-connector-run
-clap = { version = "4", features = ["derive"] }
-env_logger = "0.9"
-
-[profile.release]
-panic = "abort"
+sys = { path = "sys", package = "dc-core-sys" }
 
 [workspace]
 members = [
     "common",
+    "base",
+    "dev",
+    "lib",
+    "runner",
+    "sys",
+    "python",
 ]
+
+[profile.release]
+lto = true
+
+# Build libdc_core by this profile
+[profile.release-lib]
+inherits = "release"
+panic = "abort"
