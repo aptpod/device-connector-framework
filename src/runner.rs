@@ -156,11 +156,11 @@ unsafe extern "C-unwind" fn element_info_callback(p: *mut c_void, info: *const D
                 let msg_type = CStr::from_ptr(*q)
                     .to_str()
                     .unwrap_or_else(|_| {
-                        panic!("invalid msg type in element info of \"{}\"", element_id)
+                        panic!("invalid msg type in element info of \"{element_id}\"")
                     })
                     .parse::<MsgType>()
                     .unwrap_or_else(|_| {
-                        panic!("invalid msg type in element info of \"{}\"", element_id)
+                        panic!("invalid msg type in element info of \"{element_id}\"")
                     });
                 q = q.add(1);
                 msg_types_for_port.push(msg_type);
@@ -178,11 +178,11 @@ unsafe extern "C-unwind" fn element_info_callback(p: *mut c_void, info: *const D
                 let msg_type = CStr::from_ptr(*q)
                     .to_str()
                     .unwrap_or_else(|_| {
-                        panic!("invalid msg type in element info of \"{}\"", element_id)
+                        panic!("invalid msg type in element info of \"{element_id}\"")
                     })
                     .parse::<MsgType>()
                     .unwrap_or_else(|_| {
-                        panic!("invalid msg type in element info of \"{}\"", element_id)
+                        panic!("invalid msg type in element info of \"{element_id}\"")
                     });
                 q = q.add(1);
                 msg_types_for_port.push(msg_type);

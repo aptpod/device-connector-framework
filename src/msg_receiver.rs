@@ -81,7 +81,7 @@ impl std::io::Read for MsgReceiverReader<'_, '_> {
             let msg = self
                 .receiver
                 .recv(self.port)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                .map_err(std::io::Error::other)?;
             let msg_bytes = msg.as_bytes();
 
             let msg_len = msg_bytes.len();

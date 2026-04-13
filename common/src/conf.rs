@@ -196,14 +196,15 @@ pub mod serde_with_std_duration {
     use std::num::ParseIntError;
     use std::time::Duration;
 
+    #[allow(clippy::manual_is_multiple_of)]
     pub fn serialize<S: serde::Serializer>(t: &Duration, s: S) -> Result<S::Ok, S::Error> {
         let millis = t.as_millis();
 
         if millis % 1000 == 0 {
             let secs = millis / 1000;
-            s.serialize_str(&format!("{}s", secs))
+            s.serialize_str(&format!("{secs}s"))
         } else {
-            s.serialize_str(&format!("{}ms", millis))
+            s.serialize_str(&format!("{millis}ms"))
         }
     }
 
@@ -220,7 +221,7 @@ pub mod serde_with_std_duration {
             let secs: u64 = secs.parse().map_err(|e: ParseIntError| e.to_string())?;
             Ok(Duration::from_secs(secs))
         } else {
-            Err(format!("invalid duration config \"{}\"", s))
+            Err(format!("invalid duration config \"{s}\""))
         }
     }
 

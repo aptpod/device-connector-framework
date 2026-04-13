@@ -56,7 +56,7 @@ impl Display for MsgType {
         match self {
             MsgType::Any => write!(f, "any"),
             MsgType::Mime(mime) => write!(f, "mime:{}", mime.0),
-            MsgType::Custom(name) => write!(f, "custom:{}", name),
+            MsgType::Custom(name) => write!(f, "custom:{name}"),
         }
     }
 }

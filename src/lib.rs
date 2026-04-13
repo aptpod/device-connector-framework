@@ -64,7 +64,7 @@ macro_rules! define_plugin {
             const AUTHORS: &'static str = env!("CARGO_PKG_AUTHORS");
 
             unsafe fn init(plugin: *mut $crate::sys::DcPlugin) {
-                $crate::sys::dc_plugin_set_version(plugin, "3.0.0\0".as_ptr() as *const _);
+                $crate::sys::dc_plugin_set_version(plugin, "3.0.1\0".as_ptr() as *const _);
 
                 let name = ::std::ffi::CString::new(Self::NAME).unwrap();
                 $crate::sys::dc_plugin_set_name(plugin, name.as_ptr());

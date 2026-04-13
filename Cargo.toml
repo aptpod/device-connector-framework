@@ -1,6 +1,6 @@
 [package]
 name = "dc-core"
-version = "3.0.0"
+version = "3.0.1"
 authors = ["aptpod, Inc. Products <product-support@aptpod.co.jp>", "okubo <okubo@aptpod.co.jp>"]
 edition = "2021"
 license = "Apache-2.0"

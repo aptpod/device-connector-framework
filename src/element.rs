@@ -185,7 +185,7 @@ unsafe extern "C-unwind" fn element_next<E: ElementBuildable>(
             }
 
             // Set error message
-            let e = format!("{:?}", e);
+            let e = format!("{e:?}");
             let e = CString::new(e).unwrap();
 
             unsafe { sys::dc_pipeline_set_err_msg(pipeline, e.as_ptr()) };

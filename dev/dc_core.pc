@@ -5,7 +5,7 @@ includedir=${prefix}/include
 
 Name: dc_core
 Description: device connector core library
-Version: 3.0.0
+Version: 3.0.1
 Requires:
 Libs: -L${libdir} -ldc_core
 Cflags: -I${includedir}

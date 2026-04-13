@@ -117,22 +117,20 @@ impl ElementBuildable for TeeSrcElement {
 
     fn next(&mut self, pipeline: &mut Pipeline, _receiver: &mut MsgReceiver) -> ElementResult {
         if self.rx.is_none() {
-            self.rx = Some(
-                CHANNELS
-                    .lock()
-                    .unwrap()
-                    .get_mut(&self.conf.name)
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "unknown tee name \"{}\" specified to tee-src",
-                            self.conf.name
-                        )
-                    })?
-                    .take()
-                    .ok_or_else(|| {
-                        anyhow!("tee name duplication detected: \"{}\"", self.conf.name)
-                    })?,
-            );
+            loop {
+                {
+                    let mut guard = CHANNELS.lock().unwrap();
+                    if let Some(channel) = guard.get_mut(&self.conf.name) {
+                        let channel = channel.take().ok_or_else(|| {
+                            anyhow!("tee name duplication detected: \"{}\"", self.conf.name)
+                        })?;
+                        self.rx = Some(channel);
+                        break;
+                    }
+                }
+                log::info!("waiting to opening tee-src channel \"{}\"", self.conf.name);
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
         }
 
         let rx = self.rx.as_mut().unwrap();
