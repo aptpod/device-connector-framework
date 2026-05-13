@@ -39,12 +39,10 @@ impl MsgType {
         }
 
         match (self, other) {
-            (MsgType::Mime(Mime(mime)), MsgType::Mime(Mime(other_mime))) => {
-                if mime.type_() == other_mime.type_() {
-                    mime.subtype() == mime::STAR
-                } else {
-                    false
-                }
+            (MsgType::Mime(Mime(mime)), MsgType::Mime(Mime(other_mime)))
+                if mime.type_() == other_mime.type_() =>
+            {
+                mime.subtype() == mime::STAR
             }
             _ => false,
         }

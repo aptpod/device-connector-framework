@@ -55,13 +55,12 @@ impl ElementBuildable for FileSrcElement {
         let mut buf = pipeline.msg_buf(0);
         let mut read_buf = [0; 0xFF];
 
-        let n = loop {
-            let n = self.file.read(&mut read_buf)?;
+        let n = self.file.read(&mut read_buf)?;
 
-            if n > 0 {
-                break n;
-            }
-        };
+        if n == 0 {
+            return Ok(ElementValue::Close);
+        }
+
         buf.write_all(&read_buf[0..n])?;
         Ok(ElementValue::MsgBuf)
     }
