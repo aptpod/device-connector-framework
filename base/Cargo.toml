@@ -1,6 +1,6 @@
 [package]
 name = "dc-plugin-base"
-version = "3.0.2"
+version = "3.0.3"
 edition = "2021"
 authors = ["aptpod, Inc. Products <product-support@aptpod.co.jp>", "okubo <okubo@aptpod.co.jp>"]
 license = "Apache-2.0"

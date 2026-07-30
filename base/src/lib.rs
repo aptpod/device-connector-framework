@@ -1,5 +1,6 @@
 pub mod file;
 pub mod fixed_size;
+pub mod loopback;
 pub mod null;
 pub mod print_log;
 pub mod process;

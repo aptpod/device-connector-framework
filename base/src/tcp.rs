@@ -1,3 +1,4 @@
+use crate::loopback::warn_if_binds_beyond_loopback;
 use dc_core::{
     ElementBuildable, ElementResult, ElementValue, Error, MsgReceiver, MsgType, Pipeline, Port,
 };
@@ -28,6 +29,8 @@ pub struct TcpSrcElementConf {
     pub retry: bool,
     #[serde_as(as = "Option<DurationMilliSecondsWithFrac<f64>>")]
     pub retry_interval_ms: Option<Duration>,
+    #[serde(default)]
+    pub suppress_non_loopback_bind_warning: bool,
 }
 
 impl ElementBuildable for TcpSrcElement {
@@ -43,6 +46,11 @@ impl ElementBuildable for TcpSrcElement {
 
     fn new(conf: Self::Config) -> Result<Self, Error> {
         let listener = TcpListener::bind(&conf.addr)?;
+        warn_if_binds_beyond_loopback(
+            Self::NAME,
+            listener.local_addr()?,
+            conf.suppress_non_loopback_bind_warning,
+        );
         if let Some(ttl) = conf.ttl {
             listener.set_ttl(ttl)?;
         }

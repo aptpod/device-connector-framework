@@ -1,3 +1,4 @@
+use crate::loopback::warn_if_binds_beyond_loopback;
 use dc_core::{
     ElementBuildable, ElementResult, ElementValue, Error, MsgReceiver, MsgType, Pipeline, Port,
 };
@@ -23,6 +24,8 @@ pub struct UdpSrcElementConf {
     retry: bool,
     #[serde_as(as = "Option<DurationMilliSecondsWithFrac<f64>>")]
     retry_interval_ms: Option<Duration>,
+    #[serde(default)]
+    suppress_non_loopback_bind_warning: bool,
 }
 
 impl ElementBuildable for UdpSrcElement {
@@ -38,6 +41,11 @@ impl ElementBuildable for UdpSrcElement {
 
     fn new(conf: Self::Config) -> Result<Self, Error> {
         let socket = UdpSocket::bind(&conf.bind_addr)?;
+        warn_if_binds_beyond_loopback(
+            Self::NAME,
+            socket.local_addr()?,
+            conf.suppress_non_loopback_bind_warning,
+        );
         let buf_size = conf.buf_size.unwrap_or(0xFFFF);
         Ok(UdpSrcElement {
             socket,
