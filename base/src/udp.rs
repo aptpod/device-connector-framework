@@ -3,7 +3,7 @@ use dc_core::{
     ElementBuildable, ElementResult, ElementValue, Error, MsgReceiver, MsgType, Pipeline, Port,
 };
 use serde::Deserialize;
-use serde_with::{serde_as, DurationMilliSecondsWithFrac};
+use serde_with::{DurationMilliSecondsWithFrac, serde_as};
 use std::io::Write;
 use std::net::UdpSocket;
 use std::time::Duration;

@@ -1,3 +1,5 @@
+#![allow(clippy::manual_is_multiple_of)]
+
 use anyhow::{anyhow, Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
@@ -7,7 +9,7 @@ use std::{
 };
 
 /// Device connector configuration
-#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Debug, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Conf {
     #[serde(default)]
@@ -190,13 +192,129 @@ pub enum BgProcessWaitSignal {
     Sigusr2,
 }
 
+/// Custom Deserialize impl for Conf
+mod conf_impl_deserialize {
+    use super::*;
+    use serde::{
+        de::{self, MapAccess, Visitor},
+        Deserialize, Deserializer,
+    };
+    use std::fmt;
+
+    impl<'de> Deserialize<'de> for Conf {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            deserializer.deserialize_map(ConfVisitor)
+        }
+    }
+
+    struct ConfVisitor;
+
+    impl<'de> Visitor<'de> for ConfVisitor {
+        type Value = Conf;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("struct Conf")
+        }
+
+        fn visit_map<V>(self, mut map: V) -> Result<Conf, V::Error>
+        where
+            V: MapAccess<'de>,
+        {
+            let mut runner: Option<RunnerConf> = None;
+            let mut plugin: Option<PluginConf> = None;
+            let mut tasks: Option<Vec<TaskConf>> = None;
+            let mut bg_processes: Option<Vec<BgProcessConf>> = None;
+            let mut before_task: Option<Vec<String>> = None;
+            let mut after_task: Option<Vec<String>> = None;
+
+            const FIELDS: &[&str] = &[
+                "runner",
+                "plugin",
+                "tasks",
+                "task",
+                "bg_processes",
+                "before_task",
+                "before_script",
+                "after_task",
+                "after_script",
+            ];
+
+            while let Some(key_str) = map.next_key::<String>()? {
+                match key_str.as_str() {
+                    "runner" => {
+                        if runner.is_some() {
+                            return Err(de::Error::duplicate_field("runner"));
+                        }
+                        runner = Some(map.next_value()?);
+                    }
+                    "plugin" => {
+                        if plugin.is_some() {
+                            return Err(de::Error::duplicate_field("plugin"));
+                        }
+                        plugin = Some(map.next_value()?);
+                    }
+                    "tasks" | "task" => {
+                        if tasks.is_some() {
+                            return Err(de::Error::duplicate_field("tasks"));
+                        }
+                        tasks = Some(map.next_value()?);
+                    }
+                    "bg_processes" => {
+                        if bg_processes.is_some() {
+                            return Err(de::Error::duplicate_field("bg_processes"));
+                        }
+                        bg_processes = Some(map.next_value()?);
+                    }
+                    "before_task" | "before_script" => {
+                        if before_task.is_some() {
+                            return Err(de::Error::duplicate_field("before_task"));
+                        }
+                        before_task = Some(map.next_value()?);
+                    }
+                    "after_task" | "after_script" => {
+                        if after_task.is_some() {
+                            return Err(de::Error::duplicate_field("after_task"));
+                        }
+                        after_task = Some(map.next_value()?);
+                    }
+                    unknown_key => {
+                        if unknown_key.starts_with('.') {
+                            let _: de::IgnoredAny = map.next_value()?;
+                        } else {
+                            return Err(de::Error::unknown_field(unknown_key, FIELDS));
+                        }
+                    }
+                }
+            }
+
+            let runner = runner.unwrap_or_default();
+            let plugin = plugin.unwrap_or_default();
+            let tasks = tasks.ok_or_else(|| de::Error::missing_field("tasks"))?;
+            let bg_processes = bg_processes.unwrap_or_default();
+            let before_task = before_task.unwrap_or_default();
+            let after_task = after_task.unwrap_or_default();
+
+            Ok(Conf {
+                runner,
+                plugin,
+                tasks,
+                bg_processes,
+                before_task,
+                after_task,
+            })
+        }
+    }
+}
+
 /// Serialize/deserialize `Duration` as string with units.
 pub mod serde_with_std_duration {
     use serde::Deserialize;
     use std::num::ParseIntError;
     use std::time::Duration;
 
-    #[allow(clippy::manual_is_multiple_of)]
     pub fn serialize<S: serde::Serializer>(t: &Duration, s: S) -> Result<S::Ok, S::Error> {
         let millis = t.as_millis();
 

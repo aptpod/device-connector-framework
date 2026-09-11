@@ -5,7 +5,7 @@ use dc_core::{
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::Write;
-use std::sync::{mpsc, LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex, mpsc};
 
 #[allow(clippy::type_complexity)]
 static CHANNELS: LazyLock<Mutex<HashMap<String, Option<mpsc::Receiver<Vec<u8>>>>>> =

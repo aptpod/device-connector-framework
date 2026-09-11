@@ -3,7 +3,7 @@ use dc_core::{
     ElementBuildable, ElementResult, ElementValue, Error, MsgReceiver, MsgType, Pipeline, Port,
 };
 use serde::Deserialize;
-use serde_with::{serde_as, DurationMilliSecondsWithFrac};
+use serde_with::{DurationMilliSecondsWithFrac, serde_as};
 use std::io::Write;
 use std::thread::sleep;
 use std::time::Duration;
@@ -74,6 +74,7 @@ pub struct SplitByDelimiterFilterElement {
     scanned: bool,
     delimiter_len: usize,
     parser: Parser,
+    pending_delimiter: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -85,6 +86,18 @@ pub struct SplitByDelimiterFilterElementConfig {
     /// Buffer limit size
     #[serde(default = "default_limit_size")]
     pub limit_size: usize,
+    #[serde(default)]
+    pub delimiter_handling: DelimiterHandling,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DelimiterHandling {
+    #[default]
+    Discard,
+    Suffix,
+    Separate,
+    Prefix,
 }
 
 fn default_delimiter() -> String {
@@ -105,6 +118,7 @@ impl ElementBuildable for SplitByDelimiterFilterElement {
 | --- | --- | --- |
 | delimiter | string | Delimiter string. |
 | limit_size | integer | Maximam buffer size. The default value is 1GiB. |
+| delimiter_handling | string | Specifies delimiter handling. `discard`, `suffix`, `separate` or `prefix`. The default is `discard`. |
 "#;
 
     const RECV_PORTS: Port = 1;
@@ -134,6 +148,7 @@ impl ElementBuildable for SplitByDelimiterFilterElement {
                 delimiter,
                 stack: Vec::with_capacity(delimiter_len),
             },
+            pending_delimiter: false,
         })
     }
 
@@ -144,20 +159,63 @@ impl ElementBuildable for SplitByDelimiterFilterElement {
                 bail!("reached buffer limit size");
             }
 
+            // Separate mode: emit the pending delimiter as a standalone message
+            if self.conf.delimiter_handling == DelimiterHandling::Separate && self.pending_delimiter
+            {
+                self.pending_delimiter = false;
+                let mut buf = pipeline.msg_buf(0);
+                buf.write_all(self.conf.delimiter.as_bytes())?;
+                return Ok(ElementValue::MsgBuf);
+            }
+
             if self.scanned || self.buf.is_empty() {
                 let msg = receiver.recv(0)?;
                 let msg_bytes = msg.as_bytes();
 
                 if let Some(i) = self.parser.search_delimitor_end(msg_bytes)? {
+                    // content_len is the byte count before the delimiter
+                    let content_len = self.buf.len() + i + 1 - self.delimiter_len;
+
+                    // For modes other than Suffix, skip emitting empty content.
+                    // Exception: Prefix with a pending delimiter emits the delimiter alone.
+                    if content_len == 0
+                        && self.conf.delimiter_handling != DelimiterHandling::Suffix
+                        && !(self.conf.delimiter_handling == DelimiterHandling::Prefix
+                            && self.pending_delimiter)
+                    {
+                        self.buf.clear();
+                        if msg_bytes.len() > i + 1 {
+                            self.buf.extend_from_slice(&msg_bytes[(i + 1)..]);
+                            self.scanned = false;
+                        } else {
+                            self.scanned = true;
+                        }
+                        match self.conf.delimiter_handling {
+                            DelimiterHandling::Separate | DelimiterHandling::Prefix => {
+                                self.pending_delimiter = true;
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
                     let mut buf = pipeline.msg_buf(0);
 
+                    // Prefix mode: prepend the previous delimiter to the output
+                    if self.conf.delimiter_handling == DelimiterHandling::Prefix
+                        && self.pending_delimiter
+                    {
+                        buf.write_all(self.conf.delimiter.as_bytes())?;
+                    }
+
+                    // Write content
                     if i + 1 > self.delimiter_len {
                         let delimiter_start = i + 1 - self.delimiter_len;
                         buf.write_all(&self.buf)?;
                         buf.write_all(&msg_bytes[0..delimiter_start])?;
                     } else {
-                        let delimiter_start = self.buf.len() - self.delimiter_len + i + 1;
-                        buf.write_all(&self.buf[0..delimiter_start])?;
+                        let delimiter_start_in_buf = self.buf.len() - self.delimiter_len + i + 1;
+                        buf.write_all(&self.buf[0..delimiter_start_in_buf])?;
                     }
 
                     self.buf.clear();
@@ -168,6 +226,16 @@ impl ElementBuildable for SplitByDelimiterFilterElement {
                         self.scanned = true;
                     }
 
+                    match self.conf.delimiter_handling {
+                        DelimiterHandling::Discard => {}
+                        DelimiterHandling::Suffix => {
+                            buf.write_all(self.conf.delimiter.as_bytes())?;
+                        }
+                        DelimiterHandling::Separate | DelimiterHandling::Prefix => {
+                            self.pending_delimiter = true;
+                        }
+                    }
+
                     return Ok(ElementValue::MsgBuf);
                 } else {
                     self.buf.extend_from_slice(msg_bytes);
@@ -176,9 +244,44 @@ impl ElementBuildable for SplitByDelimiterFilterElement {
                 }
             } else {
                 if let Some(i) = self.parser.search_delimitor_end(&self.buf)? {
+                    let delimiter_start = i + 1 - self.delimiter_len;
+                    let content_len = delimiter_start;
+
+                    // For modes other than Suffix, skip emitting empty content.
+                    // Exception: Prefix with a pending delimiter emits the delimiter alone.
+                    if content_len == 0
+                        && self.conf.delimiter_handling != DelimiterHandling::Suffix
+                        && !(self.conf.delimiter_handling == DelimiterHandling::Prefix
+                            && self.pending_delimiter)
+                    {
+                        let remaining = self.buf.len() - (i + 1);
+                        if remaining > 0 {
+                            self.buf.copy_within((i + 1).., 0);
+                            self.buf.resize_with(remaining, || unreachable!());
+                            self.scanned = false;
+                        } else {
+                            self.buf.clear();
+                            self.scanned = true;
+                        }
+                        match self.conf.delimiter_handling {
+                            DelimiterHandling::Separate | DelimiterHandling::Prefix => {
+                                self.pending_delimiter = true;
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
                     let mut buf = pipeline.msg_buf(0);
 
-                    let delimiter_start = i + 1 - self.delimiter_len;
+                    // Prefix mode: prepend the previous delimiter to the output
+                    if self.conf.delimiter_handling == DelimiterHandling::Prefix
+                        && self.pending_delimiter
+                    {
+                        buf.write_all(self.conf.delimiter.as_bytes())?;
+                    }
+
+                    // Write content before rearranging self.buf
                     buf.write_all(&self.buf[0..delimiter_start])?;
 
                     let remaining = self.buf.len() - (i + 1);
@@ -189,6 +292,16 @@ impl ElementBuildable for SplitByDelimiterFilterElement {
                     } else {
                         self.buf.clear();
                         self.scanned = true;
+                    }
+
+                    match self.conf.delimiter_handling {
+                        DelimiterHandling::Discard => {}
+                        DelimiterHandling::Suffix => {
+                            buf.write_all(self.conf.delimiter.as_bytes())?;
+                        }
+                        DelimiterHandling::Separate | DelimiterHandling::Prefix => {
+                            self.pending_delimiter = true;
+                        }
                     }
 
                     return Ok(ElementValue::MsgBuf);
@@ -210,10 +323,10 @@ struct Parser {
 impl Parser {
     fn search_delimitor_end(&mut self, s: &[u8]) -> Result<Option<usize>, Error> {
         for (i, &c) in s.iter().enumerate() {
-            if let Some(next_byte) = self.delimiter.get(self.stack.len()).copied() {
-                if c == next_byte {
-                    self.stack.push(c);
-                }
+            if let Some(next_byte) = self.delimiter.get(self.stack.len()).copied()
+                && c == next_byte
+            {
+                self.stack.push(c);
             }
 
             if self.stack.len() == self.delimiter.len() {

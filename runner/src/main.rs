@@ -1,6 +1,6 @@
-mod env_replacer;
 mod show;
 
+use std::io::Read;
 use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
@@ -22,11 +22,8 @@ pub enum LogLevel {
 pub enum Command {
     /// Run with a given configuration
     Run {
-        /// Config file path
-        config: PathBuf,
-        /// Regex string using for replacement by enviroment variable in the configuration.
-        #[clap(long)]
-        env_replacer: Option<regex::Regex>,
+        /// Config file path or `-` for stdin
+        config: String,
         #[clap(long)]
         log_level: Option<LogLevel>,
     },
@@ -106,17 +103,16 @@ fn main() -> Result<()> {
     }
 
     match args {
-        Command::Run {
-            config,
-            env_replacer,
-            ..
-        } => {
-            let config = std::fs::read_to_string(&config)
-                .with_context(|| format!("Reading {} failed", config.display()))?;
-            let config = if let Some(env_replacer) = env_replacer {
-                env_replacer::env_replace(config, env_replacer)
-            } else {
+        Command::Run { config, .. } => {
+            let config = if config.as_str() == "-" {
+                let mut config = String::new();
+                std::io::stdin()
+                    .read_to_string(&mut config)
+                    .with_context(|| format!("reading stdio failed"))?;
                 config
+            } else {
+                std::fs::read_to_string(&config)
+                    .with_context(|| format!("reading {} failed", config))?
             };
             runner.config(config)?.run()?;
         }

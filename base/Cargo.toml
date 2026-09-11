@@ -1,7 +1,7 @@
 [package]
 name = "dc-plugin-base"
-version = "3.0.3"
-edition = "2021"
+version = "3.1.1"
+edition = "2024"
 authors = ["aptpod, Inc. Products <product-support@aptpod.co.jp>", "okubo <okubo@aptpod.co.jp>"]
 license = "Apache-2.0"
 description = "device connector base plugin"
@@ -16,6 +16,7 @@ name = "dc_base"
 [dependencies]
 anyhow = "1.0.79"
 log = "0.4.20"
+rustix = { version = "1.1.2", features = ["process"] }
 serde = { version = "1.0.195", features = ["derive"] }
 serde_with = "3.4.0"
 

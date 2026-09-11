@@ -3,7 +3,7 @@ use dc_core::{
     ElementBuildable, ElementResult, ElementValue, Error, MsgReceiver, MsgType, Pipeline, Port,
 };
 use serde::Deserialize;
-use serde_with::{serde_as, DurationMilliSecondsWithFrac};
+use serde_with::{DurationMilliSecondsWithFrac, serde_as};
 use std::io::{Read, Write};
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -135,39 +135,37 @@ impl ElementBuildable for ProcessSrcElement {
 
                 if n > 0 {
                     break n;
-                } else {
-                    if let Ok(exit_status) = child.try_wait() {
-                        if let Some(exit_status) = exit_status {
-                            let log_level = if self.conf.retry {
-                                log::Level::Warn
+                } else if let Ok(exit_status) = child.try_wait() {
+                    if let Some(exit_status) = exit_status {
+                        let log_level = if self.conf.retry {
+                            log::Level::Warn
+                        } else {
+                            log::Level::Error
+                        };
+                        if !exit_status.success() {
+                            if let Some(code) = exit_status.code() {
+                                log::log!(
+                                    log_level,
+                                    "process `{}` exit with code = {}",
+                                    self.command_string,
+                                    code
+                                );
                             } else {
-                                log::Level::Error
-                            };
-                            if !exit_status.success() {
-                                if let Some(code) = exit_status.code() {
-                                    log::log!(
-                                        log_level,
-                                        "process `{}` exit with code = {}",
-                                        self.command_string,
-                                        code
-                                    );
-                                } else {
-                                    log::log!(
-                                        log_level,
-                                        "process `{}` exit with failure",
-                                        self.command_string
-                                    );
-                                }
+                                log::log!(
+                                    log_level,
+                                    "process `{}` exit with failure",
+                                    self.command_string
+                                );
                             }
                         }
+                    }
 
-                        if self.conf.retry {
-                            self.child = None;
-                            std::thread::sleep(self.conf.retry_interval_ms);
-                            continue 'read_loop;
-                        } else {
-                            return Ok(ElementValue::Close);
-                        }
+                    if self.conf.retry {
+                        self.child = None;
+                        std::thread::sleep(self.conf.retry_interval_ms);
+                        continue 'read_loop;
+                    } else {
+                        return Ok(ElementValue::Close);
                     }
                 }
             };

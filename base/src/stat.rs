@@ -2,7 +2,7 @@ use dc_core::{
     ElementBuildable, ElementResult, ElementValue, Error, MsgReceiver, MsgType, Pipeline, Port,
 };
 use serde::Deserialize;
-use serde_with::{serde_as, DurationMilliSecondsWithFrac};
+use serde_with::{DurationMilliSecondsWithFrac, serde_as};
 use std::time::{Duration, Instant};
 
 /// Count passed message size and print statistics.
